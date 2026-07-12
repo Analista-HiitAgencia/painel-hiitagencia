@@ -1,0 +1,11 @@
+# Dependências da ferramenta (instaladas automaticamente pelo INICIAR.bat)
+streamlit==1.37.1
+pandas==2.2.2
+numpy==1.26.4
+plotly==5.23.0
+requests==2.32.3
+python-dotenv==1.0.1
+pywebview==5.2
+google-auth-oauthlib==1.2.1
+SQLAlchemy==2.0.51
+psycopg2-binary==2.9.9

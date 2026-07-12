@@ -1,0 +1,14 @@
+# Aparência do painel — identidade HiitAgência (dark + dourado)
+[theme]
+base = "dark"
+primaryColor = "#E0A867"
+backgroundColor = "#141310"
+secondaryBackgroundColor = "#1C1A14"
+textColor = "#F2EEE6"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true

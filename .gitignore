@@ -1,0 +1,17 @@
+# NUNCA versionar chaves de API nem dados locais
+.env
+dados_locais/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.streamlit/secrets.toml
+launcher_erro.log
+*.log
+
+# Segredos do Google OAuth (arquivos baixados)
+client_secret_*.json
+*.apps.googleusercontent.com.json
+
+# Config local do Claude Code (não vai pro deploy)
+.claude/
