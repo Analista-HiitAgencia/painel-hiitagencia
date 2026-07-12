@@ -38,6 +38,8 @@ if not exist ".venv\.instalado" (
     pause
     exit /b 1
   )
+  REM pywebview: janela propria (so no PC, nao vai no requirements da nuvem)
+  pip install pywebview==5.2
   echo ok> ".venv\.instalado"
 )
 

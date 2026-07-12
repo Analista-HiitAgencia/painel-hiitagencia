@@ -15,3 +15,6 @@ client_secret_*.json
 
 # Config local do Claude Code (não vai pro deploy)
 .claude/
+
+# Arquivo temporário com as chaves para colar no Streamlit Cloud
+secrets_para_streamlit.txt
