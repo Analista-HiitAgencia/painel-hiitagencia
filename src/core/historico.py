@@ -63,11 +63,13 @@ def ler(artista: str, chave: str, dias: int) -> pd.DataFrame:
     corte = (date.today() - timedelta(days=dias)).isoformat()
     with engine().connect() as con:
         linhas = con.execute(
-            text("""SELECT data, seguidores, alcance, interacoes, visualizacoes
+            text("""SELECT data, seguidores, visualizacoes, interacoes, alcance
                  FROM fotos WHERE artista=:a AND chave=:c AND data>=:corte
                  ORDER BY data"""),
             {"a": artista, "c": chave, "corte": corte},
         ).fetchall()
+    # A ordem das colunas do SELECT acima bate com ["data"] + COLUNAS_METRICAS
+    # (seguidores, visualizacoes, interacoes, alcance) — não trocar!
     df = pd.DataFrame(linhas, columns=["data"] + COLUNAS_METRICAS)
     if not df.empty:
         df["data"] = pd.to_datetime(df["data"])
