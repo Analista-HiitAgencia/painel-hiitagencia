@@ -24,7 +24,7 @@ from src.config.regions import (
     listar_mesorregioes, nome_da_mesorregiao,
 )
 from src.core import historico
-from src.core.consolidado import serie_consolidada
+from src.core.consolidado import serie_agencia, serie_consolidada
 from src.core.metrics import (
     COLUNAS_METRICAS, METRICAS_CONSOLIDADAS, PERIODOS, crescimento,
     formatar_compacto, formatar_numero, formatar_percentual, valor_atual,
@@ -43,9 +43,15 @@ nuvem.carregar_segredos_streamlit()
 acesso.exigir_login(st)
 
 
-@st.cache_data(ttl=900, show_spinner="Somando as redes da região...")
+# Opção especial: a visão que SOMA todos os artistas (a agência inteira).
+AGENCIA = "__agencia__"
+
+
+@st.cache_data(ttl=900, show_spinner="Somando as redes...")
 def carregar(artista: str, cidades: tuple, meses: int, modo: str, uf: str):
     # ttl=900: os dados se renovam sozinhos a cada 15 minutos.
+    if artista == AGENCIA:
+        return serie_agencia(list(cidades), meses, uf)
     total, por_rede = serie_consolidada(artista, list(cidades), meses, uf)
     return total, por_rede
 
@@ -83,10 +89,14 @@ else:
 st.sidebar.header("🎛️ Filtros")
 
 artistas = listar_artistas()
+# A agência (soma de todos) fica no TOPO e é a opção padrão ao abrir.
+nomes_artista = {AGENCIA: "🏢 HiitAgência (todos os artistas)"}
+nomes_artista.update(dict(artistas))
 artista_id = st.sidebar.selectbox(
-    "Artista", options=[a[0] for a in artistas],
-    format_func=lambda x: dict(artistas)[x],
+    "Artista", options=[AGENCIA] + [a[0] for a in artistas],
+    format_func=lambda x: nomes_artista[x],
 )
+eh_agencia = artista_id == AGENCIA
 
 estados = listar_estados()
 uf = st.sidebar.selectbox(
@@ -129,7 +139,7 @@ st.sidebar.caption(
 #  Carregamento
 # ---------------------------------------------------------------------
 try:
-    total, por_rede = carregar(artista_id, cidades, meses, settings.modo_dados(), uf_param)
+    total, detalhe = carregar(artista_id, cidades, meses, settings.modo_dados(), uf_param)
 except Exception as erro:  # noqa: BLE001
     st.error(f"❌ Erro ao obter os dados. Detalhe técnico: `{erro}`")
     st.stop()
@@ -151,12 +161,18 @@ else:
         serie_evolucao = total
 
 # Contexto
-nome_artista = dict(artistas)[artista_id]
-redes_incluidas = " · ".join(
-    f"{REDES[r]['icone']} {REDES[r]['nome']}" for r in por_rede
-)
-st.subheader(f"🎤 {nome_artista} — {nome_regiao}")
-st.caption(f"Período: **{periodo_rotulo}**  ·  Redes somadas: {redes_incluidas}")
+if eh_agencia:
+    nome_artista = "HiitAgência (todos os artistas)"
+    icone_titulo = "🏢"
+    incluidos = " · ".join(dict(artistas).get(a, a) for a in detalhe)
+    rotulo_incluidos = "Artistas somados"
+else:
+    nome_artista = dict(artistas)[artista_id]
+    icone_titulo = "🎤"
+    incluidos = " · ".join(f"{REDES[r]['icone']} {REDES[r]['nome']}" for r in detalhe)
+    rotulo_incluidos = "Redes somadas"
+st.subheader(f"{icone_titulo} {nome_artista} — {nome_regiao}")
+st.caption(f"Período: **{periodo_rotulo}**  ·  {rotulo_incluidos}: {incluidos}")
 
 if not settings.esta_em_demo():
     if cidades:
@@ -220,22 +236,30 @@ else:
 # ---------------------------------------------------------------------
 #  Detalhamento por rede (opcional, escondido num "expandir")
 # ---------------------------------------------------------------------
-with st.expander("🔎 Ver quanto cada rede contribui (detalhamento)"):
+col_grupo = "Artista" if eh_agencia else "Rede"
+titulo_det = (
+    "🔎 Ver quanto cada artista contribui (detalhamento)" if eh_agencia
+    else "🔎 Ver quanto cada rede contribui (detalhamento)"
+)
+with st.expander(titulo_det):
     linhas = []
-    for rede_id, df_rede in por_rede.items():
-        linha = {"Rede": f"{REDES[rede_id]['icone']} {REDES[rede_id]['nome']}"}
+    for chave_grupo, df_g in detalhe.items():
+        if eh_agencia:
+            rotulo = {col_grupo: dict(artistas).get(chave_grupo, chave_grupo)}
+        else:
+            rotulo = {col_grupo: f"{REDES[chave_grupo]['icone']} {REDES[chave_grupo]['nome']}"}
         for chave, meta in METRICAS_CONSOLIDADAS.items():
-            linha[meta["rotulo"]] = formatar_numero(valor_atual(df_rede, chave))
-        linhas.append(linha)
+            rotulo[meta["rotulo"]] = formatar_numero(valor_atual(df_g, chave))
+        linhas.append(rotulo)
     if linhas:
         st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
-    if "youtube" in por_rede:
+    if not eh_agencia and "youtube" in detalhe:
         st.caption(
             "ℹ️ YouTube = desempenho do **canal oficial** (uploads do canal). "
             "Não inclui as *Art Tracks* (faixas automáticas da distribuidora), "
             "que aparecem só no YouTube Studio."
         )
-    if "spotify" in por_rede:
+    if not eh_agencia and "spotify" in detalhe:
         st.caption(
             "ℹ️ Spotify (dados manuais): **Visualizações** = streams · "
             "**Alcance** = ouvintes (últimos 3 meses)."
@@ -249,7 +273,7 @@ exportar["data"] = exportar["data"].dt.strftime("%d/%m/%Y")
 st.download_button(
     "⬇️ Baixar histórico consolidado (CSV)",
     data=exportar.to_csv(index=False).encode("utf-8-sig"),
-    file_name=f"{artista_id}_{nome_regiao}_{periodo_rotulo}.csv".replace(" ", "_"),
+    file_name=f"{('hiitagencia' if eh_agencia else artista_id)}_{nome_regiao}_{periodo_rotulo}.csv".replace(" ", "_"),
     mime="text/csv",
 )
 

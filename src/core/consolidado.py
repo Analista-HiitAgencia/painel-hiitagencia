@@ -52,3 +52,38 @@ def serie_consolidada(
         total = pd.DataFrame(columns=["data"] + COLUNAS_METRICAS)
 
     return total.sort_values("data").reset_index(drop=True), por_rede
+
+
+def serie_agencia(
+    cidades: list[str], meses: int, uf: str = ""
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """
+    Visão da AGÊNCIA: soma TODOS os artistas do casting (a empresa inteira).
+
+    Devolve (total, por_artista):
+      - total: DataFrame mensal somando todos os artistas (todas as redes)
+      - por_artista: {artista_id: DataFrame mensal consolidado daquele artista}
+    """
+    from ..config.artists import listar_artistas
+
+    total: pd.DataFrame | None = None
+    por_artista: dict[str, pd.DataFrame] = {}
+
+    for art_id, _nome in listar_artistas():
+        df, _por_rede = serie_consolidada(art_id, list(cidades), meses, uf)
+        if df is None or df.empty:
+            continue
+        por_artista[art_id] = df
+        if total is None:
+            total = df.copy()
+        else:
+            total = (
+                total.set_index("data")
+                .add(df.set_index("data"), fill_value=0)
+                .reset_index()
+            )
+
+    if total is None:
+        total = pd.DataFrame(columns=["data"] + COLUNAS_METRICAS)
+
+    return total.sort_values("data").reset_index(drop=True), por_artista
