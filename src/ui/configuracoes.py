@@ -209,6 +209,40 @@ def _envs_do_artista(art_id: str) -> dict[str, str]:
     }
 
 
+def _diag_youtube(st) -> None:
+    """Testa o login OAuth do YouTube AQUI (PC ou nuvem) e mostra o erro exato."""
+    from ..config.artists import listar_artistas
+    from ..connectors import youtube_auth
+    from ..connectors.youtube import ConectorYouTube
+
+    conn = ConectorYouTube()
+    cid = settings.get_env("YOUTUBE_CLIENT_ID")
+    cs = settings.get_env("YOUTUBE_CLIENT_SECRET")
+    st.write(
+        f"- Chave de API: {'✅' if settings.get_env('YOUTUBE_API_KEY') else '❌'}  ·  "
+        f"Client ID: {'✅' if cid else '❌'}  ·  Client Secret: {'✅' if cs else '❌'}"
+    )
+    for a_id, a_nome in listar_artistas():
+        rt = settings.get_env(youtube_auth._env_refresh(a_id))
+        fim = ("…" + rt[-6:]) if rt else "— (VAZIO nesta máquina/nuvem)"
+        st.markdown(f"**🎤 {a_nome}** — refresh token termina em `{fim}`")
+        if not rt:
+            st.error("Sem refresh token nas chaves. (Confira se a chave está nos Secrets.)")
+            continue
+        try:
+            tok = youtube_auth.obter_access_token(a_id)
+            if not tok:
+                st.error("Não renovou o acesso (falta Client ID/Secret?).")
+                continue
+            views, inter = conn._analytics_periodo(conn._canal_id(a_id), tok)
+            if views > 0:
+                st.success(f"✅ Login OK — views(90d)={views:,.0f} · interações={inter:,.0f}")
+            else:
+                st.warning("Login renovou, mas veio views=0 (canal sem dados na janela?).")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"❌ Falha ao renovar/consultar: `{type(e).__name__}: {str(e)[:180]}`")
+
+
 def render(st) -> None:
     from ..config.artists import listar_artistas
 
@@ -301,6 +335,14 @@ def render(st) -> None:
                             )
                     except Exception as erro:  # noqa: BLE001
                         st.error(f"❌ Não deu para autorizar.\n\nDetalhe: `{erro}`")
+
+    with st.expander("🔎 YouTube — diagnóstico (ver por que vem zero)"):
+        st.caption(
+            "Testa o login do YouTube **aqui** (no PC ou na nuvem) e mostra o "
+            "erro exato — sem mostrar as chaves. Use para comparar PC × nuvem."
+        )
+        if st.button("🔎 Testar YouTube agora"):
+            _diag_youtube(st)
 
     # ---- Credenciais do Spotify (compartilhadas) ----
     with st.expander("🟢 Spotify — credenciais (só uma vez, vale p/ todos)"):
