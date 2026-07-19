@@ -26,7 +26,8 @@ from .base import ConectorBase
 
 USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 VIDEO_LIST_URL = "https://open.tiktokapis.com/v2/video/list/"
-MAX_PAGINAS = 10  # até ~200 vídeos somados (20 por página)
+MAX_PAGINAS = 80  # teto de segurança: até ~1600 vídeos somados (20 por página)
+CACHE_HORAS = 20  # recalcula a soma de views no máximo 1x por dia
 
 
 class ConectorTikTok(ConectorBase):
@@ -46,10 +47,23 @@ class ConectorTikTok(ConectorBase):
         u = r.json().get("data", {}).get("user", {})
         return float(u.get("follower_count", 0) or 0), float(u.get("likes_count", 0) or 0)
 
-    def _soma_views(self, token: str) -> float:
-        """Soma as visualizações dos vídeos (paginado, com teto de segurança)."""
+    def _soma_views(self, token: str, artista_id: str) -> float:
+        """Soma as views de TODOS os vídeos. Guarda no banco e recalcula 1x/dia."""
+        from datetime import datetime, timedelta
+
+        from ..core import tiktok_cache
+        cache = tiktok_cache.ler(artista_id)
+        if cache and cache.get("atualizado"):
+            try:
+                idade = datetime.utcnow() - datetime.fromisoformat(cache["atualizado"])
+                if idade < timedelta(hours=CACHE_HORAS):
+                    return cache["views"]  # valor recente guardado -> instantâneo
+            except Exception:  # noqa: BLE001
+                pass
+
         total = 0.0
         cursor = None
+        completo = False
         for _ in range(MAX_PAGINAS):
             corpo = {"max_count": 20}
             if cursor is not None:
@@ -60,12 +74,26 @@ class ConectorTikTok(ConectorBase):
                 json=corpo, headers=self._headers(token), timeout=30,
             )
             r.raise_for_status()
-            dados = r.json().get("data", {})
-            for v in dados.get("videos", []):
+            j = r.json()
+            if (j.get("error") or {}).get("code") not in (None, "", "ok"):
+                break  # rate limit / erro -> total ficou incompleto
+            dados = j.get("data", {})
+            vids = dados.get("videos", [])
+            for v in vids:
                 total += float(v.get("view_count", 0) or 0)
             if not dados.get("has_more"):
+                completo = True
                 break
+            if not vids:
+                break  # página vazia com has_more -> provável rate limit (incompleto)
             cursor = dados.get("cursor")
+
+        if completo and total > 0:
+            tiktok_cache.salvar(artista_id, total)  # só guarda total confiável
+            return total
+        # incompleto (ex.: rate limit): usa o último valor bom guardado, se houver
+        if cache and cache.get("views"):
+            return cache["views"]
         return total
 
     def serie_mensal(self, artista_id: str, cidades: list[str], meses: int,
@@ -80,7 +108,7 @@ class ConectorTikTok(ConectorBase):
 
         seguidores, curtidas = self._user_info(token)
         try:
-            visualizacoes = self._soma_views(token)
+            visualizacoes = self._soma_views(token, artista_id)
         except Exception:  # noqa: BLE001 - sem permissão de vídeos: mantém 0
             visualizacoes = 0.0
 
