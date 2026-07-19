@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import date
 
 import pandas as pd
@@ -26,8 +27,9 @@ from .base import ConectorBase
 
 USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 VIDEO_LIST_URL = "https://open.tiktokapis.com/v2/video/list/"
-MAX_PAGINAS = 80  # teto de segurança: até ~1600 vídeos somados (20 por página)
+MAX_PAGINAS = 90  # teto de segurança: até ~1800 vídeos somados (20 por página)
 CACHE_HORAS = 20  # recalcula a soma de views no máximo 1x por dia
+PAUSA_PAGINA = 0.6  # pausa entre páginas p/ não estourar o limite por minuto do TikTok
 
 
 class ConectorTikTok(ConectorBase):
@@ -68,13 +70,16 @@ class ConectorTikTok(ConectorBase):
             corpo = {"max_count": 20}
             if cursor is not None:
                 corpo["cursor"] = cursor
-            r = requests.post(
-                VIDEO_LIST_URL,
-                params={"fields": "view_count"},
-                json=corpo, headers=self._headers(token), timeout=30,
-            )
-            r.raise_for_status()
-            j = r.json()
+            try:
+                r = requests.post(
+                    VIDEO_LIST_URL,
+                    params={"fields": "view_count"},
+                    json=corpo, headers=self._headers(token), timeout=30,
+                )
+                r.raise_for_status()
+                j = r.json()
+            except Exception:  # noqa: BLE001 - erro/limite: para sem zerar o parcial
+                break
             if (j.get("error") or {}).get("code") not in (None, "", "ok"):
                 break  # rate limit / erro -> total ficou incompleto
             dados = j.get("data", {})
@@ -87,6 +92,7 @@ class ConectorTikTok(ConectorBase):
             if not vids:
                 break  # página vazia com has_more -> provável rate limit (incompleto)
             cursor = dados.get("cursor")
+            time.sleep(PAUSA_PAGINA)  # respeita o limite por minuto do TikTok
 
         if completo and total > 0:
             tiktok_cache.salvar(artista_id, total)  # só guarda total confiável
