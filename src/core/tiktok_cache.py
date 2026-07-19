@@ -1,10 +1,10 @@
 """
 =====================================================================
- CACHE DAS VISUALIZAÇÕES DO TIKTOK (guardado no banco)
+ CACHE DAS MÉTRICAS DO TIKTOK (guardado no banco)
 ---------------------------------------------------------------------
- Somar as views de TODOS os vídeos do TikTok é demorado (~40s numa
- conta com ~1.000 vídeos). Então guardamos o total no banco e só
- recalculamos 1x por dia — o painel lê o valor guardado na hora.
+ Varrer os vídeos do TikTok tem custo (limite por minuto da API). Então
+ guardamos o resultado (views e interações dos últimos 90 dias) no banco
+ e só recalculamos 1x por dia — o painel lê o valor guardado na hora.
 =====================================================================
 """
 
@@ -26,9 +26,16 @@ def _garantir_tabela() -> None:
     with engine().begin() as con:
         con.execute(text(
             """CREATE TABLE IF NOT EXISTS tiktok_views (
-                artista TEXT PRIMARY KEY, views REAL, atualizado TEXT
+                artista TEXT PRIMARY KEY, views REAL, interacoes REAL, atualizado TEXT
             )"""
         ))
+    # migração da tabela antiga (sem 'interacoes') em transação SEPARADA — no
+    # Postgres um ALTER que falha aborta a transação inteira, então isola aqui.
+    try:
+        with engine().begin() as con:
+            con.execute(text("ALTER TABLE tiktok_views ADD COLUMN interacoes REAL"))
+    except Exception:  # noqa: BLE001 - coluna já existe: ok
+        pass
     _CRIADA = True
 
 
@@ -36,21 +43,25 @@ def ler(artista: str) -> dict | None:
     _garantir_tabela()
     with engine().connect() as con:
         linha = con.execute(
-            text("SELECT views, atualizado FROM tiktok_views WHERE artista=:a"),
+            text("SELECT views, interacoes, atualizado FROM tiktok_views WHERE artista=:a"),
             {"a": artista},
         ).fetchone()
     if not linha:
         return None
-    return {"views": float(linha[0] or 0), "atualizado": linha[1]}
+    return {
+        "views": float(linha[0] or 0),
+        "interacoes": float(linha[1] or 0),
+        "atualizado": linha[2],
+    }
 
 
-def salvar(artista: str, views: float) -> None:
+def salvar(artista: str, views: float, interacoes: float) -> None:
     _garantir_tabela()
     agora = datetime.utcnow().isoformat()
     with engine().begin() as con:
         con.execute(text("DELETE FROM tiktok_views WHERE artista=:a"), {"a": artista})
         con.execute(
-            text("INSERT INTO tiktok_views (artista, views, atualizado)"
-                 " VALUES (:a, :v, :t)"),
-            {"a": artista, "v": float(views), "t": agora},
+            text("INSERT INTO tiktok_views (artista, views, interacoes, atualizado)"
+                 " VALUES (:a, :v, :i, :t)"),
+            {"a": artista, "v": float(views), "i": float(interacoes), "t": agora},
         )

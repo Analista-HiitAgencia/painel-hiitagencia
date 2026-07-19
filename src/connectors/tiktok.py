@@ -3,33 +3,36 @@
  CONECTOR REAL DO TIKTOK  (Display API)
 ---------------------------------------------------------------------
  Traz, da conta autorizada de cada artista:
-   - seguidores (follower_count)
-   - interações  = total de curtidas da conta (likes_count)
-   - visualizações = soma das views dos vídeos (video/list)
- O TikTok NÃO dá dado por cidade/região -> só entra em "Conta inteira"
- (igual ao Facebook e ao Spotify). Alcance não existe -> 0.
+   - seguidores (follower_count, valor atual)
+   - visualizações = soma das views dos vídeos postados nos ÚLTIMOS 90 DIAS
+   - interações    = soma de curtidas+comentários+compartilhamentos dos
+                     vídeos dos últimos 90 dias
+ A janela de 90 dias é a MESMA das outras redes (Instagram, YouTube,
+ Facebook, Spotify) — para o consolidado ser coerente.
 
- Precisa do login por artista (ver tiktok_auth.py).
+ O TikTok NÃO dá dado por cidade/região -> só entra em "Conta inteira".
+ Alcance não existe no TikTok -> 0. Precisa do login por artista.
 =====================================================================
 """
 
 from __future__ import annotations
 
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import requests
 
-from ..core.metrics import COLUNAS_METRICAS
+from ..core.metrics import COLUNAS_METRICAS, JANELA_METRICAS_DIAS
 from . import tiktok_auth
 from .base import ConectorBase
 
 USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 VIDEO_LIST_URL = "https://open.tiktokapis.com/v2/video/list/"
-MAX_PAGINAS = 90  # teto de segurança: até ~1800 vídeos somados (20 por página)
-CACHE_HORAS = 20  # recalcula a soma de views no máximo 1x por dia
-PAUSA_PAGINA = 0.6  # pausa entre páginas p/ não estourar o limite por minuto do TikTok
+MAX_PAGINAS = 90       # teto de segurança de páginas (20 vídeos por página)
+CACHE_HORAS = 20       # recalcula as métricas no máximo 1x por dia
+PAUSA_PAGINA = 0.6     # pausa entre páginas p/ não estourar o limite por minuto
+CAMPOS_VIDEO = "view_count,like_count,comment_count,share_count,create_time"
 
 
 class ConectorTikTok(ConectorBase):
@@ -38,32 +41,30 @@ class ConectorTikTok(ConectorBase):
     def _headers(self, token: str) -> dict:
         return {"Authorization": f"Bearer {token}"}
 
-    def _user_info(self, token: str) -> tuple[float, float]:
-        """Devolve (seguidores, curtidas_totais)."""
+    def _follower_count(self, token: str) -> float:
         r = requests.get(
-            USER_INFO_URL,
-            params={"fields": "follower_count,likes_count,video_count"},
+            USER_INFO_URL, params={"fields": "follower_count"},
             headers=self._headers(token), timeout=30,
         )
         r.raise_for_status()
         u = r.json().get("data", {}).get("user", {})
-        return float(u.get("follower_count", 0) or 0), float(u.get("likes_count", 0) or 0)
+        return float(u.get("follower_count", 0) or 0)
 
-    def _soma_views(self, token: str, artista_id: str) -> float:
-        """Soma as views de TODOS os vídeos. Guarda no banco e recalcula 1x/dia."""
-        from datetime import datetime, timedelta
-
-        from ..core import tiktok_cache
-        cache = tiktok_cache.ler(artista_id)
+    def _metricas_90d(self, token: str, artista_id: str) -> tuple[float, float]:
+        """Views e interações dos vídeos dos últimos 90 dias. Cache diário.
+        Devolve (visualizacoes, interacoes)."""
+        cache = tiktok_cache_ler(artista_id)
         if cache and cache.get("atualizado"):
             try:
                 idade = datetime.utcnow() - datetime.fromisoformat(cache["atualizado"])
                 if idade < timedelta(hours=CACHE_HORAS):
-                    return cache["views"]  # valor recente guardado -> instantâneo
+                    return cache["views"], cache["interacoes"]  # valor recente guardado
             except Exception:  # noqa: BLE001
                 pass
 
-        total = 0.0
+        corte = time.time() - JANELA_METRICAS_DIAS * 86400  # 90 dias atrás
+        views = 0.0
+        inter = 0.0
         cursor = None
         completo = False
         for _ in range(MAX_PAGINAS):
@@ -72,8 +73,7 @@ class ConectorTikTok(ConectorBase):
                 corpo["cursor"] = cursor
             try:
                 r = requests.post(
-                    VIDEO_LIST_URL,
-                    params={"fields": "view_count"},
+                    VIDEO_LIST_URL, params={"fields": CAMPOS_VIDEO},
                     json=corpo, headers=self._headers(token), timeout=30,
                 )
                 r.raise_for_status()
@@ -81,26 +81,35 @@ class ConectorTikTok(ConectorBase):
             except Exception:  # noqa: BLE001 - erro/limite: para sem zerar o parcial
                 break
             if (j.get("error") or {}).get("code") not in (None, "", "ok"):
-                break  # rate limit / erro -> total ficou incompleto
+                break
             dados = j.get("data", {})
             vids = dados.get("videos", [])
+            recentes = 0
             for v in vids:
-                total += float(v.get("view_count", 0) or 0)
-            if not dados.get("has_more"):
+                ct = float(v.get("create_time", 0) or 0)
+                if ct and ct < corte:
+                    continue  # vídeo mais antigo que 90 dias -> fora da janela
+                views += float(v.get("view_count", 0) or 0)
+                inter += (float(v.get("like_count", 0) or 0)
+                          + float(v.get("comment_count", 0) or 0)
+                          + float(v.get("share_count", 0) or 0))
+                recentes += 1
+            if not dados.get("has_more") or not vids:
                 completo = True
                 break
-            if not vids:
-                break  # página vazia com has_more -> provável rate limit (incompleto)
+            if recentes == 0:
+                completo = True  # página inteira já passou dos 90 dias -> pode parar
+                break
             cursor = dados.get("cursor")
-            time.sleep(PAUSA_PAGINA)  # respeita o limite por minuto do TikTok
+            time.sleep(PAUSA_PAGINA)
 
-        if completo and total > 0:
-            tiktok_cache.salvar(artista_id, total)  # só guarda total confiável
-            return total
+        if completo:
+            tiktok_cache_salvar(artista_id, views, inter)
+            return views, inter
         # incompleto (ex.: rate limit): usa o último valor bom guardado, se houver
-        if cache and cache.get("views"):
-            return cache["views"]
-        return total
+        if cache:
+            return cache["views"], cache["interacoes"]
+        return views, inter
 
     def serie_mensal(self, artista_id: str, cidades: list[str], meses: int,
                      uf: str = "") -> pd.DataFrame:
@@ -112,17 +121,27 @@ class ConectorTikTok(ConectorBase):
         if not token:
             return vazio  # sem autorização -> não contribui
 
-        seguidores, curtidas = self._user_info(token)
+        seguidores = self._follower_count(token)
         try:
-            visualizacoes = self._soma_views(token, artista_id)
+            visualizacoes, interacoes = self._metricas_90d(token, artista_id)
         except Exception:  # noqa: BLE001 - sem permissão de vídeos: mantém 0
-            visualizacoes = 0.0
+            visualizacoes, interacoes = 0.0, 0.0
 
         mes_atual = pd.Timestamp(date.today()).replace(day=1)
         return pd.DataFrame([{
             "data": mes_atual,
             "seguidores": seguidores,
             "alcance": 0.0,
-            "interacoes": curtidas,
+            "interacoes": interacoes,
             "visualizacoes": visualizacoes,
         }])[["data"] + COLUNAS_METRICAS]
+
+
+def tiktok_cache_ler(artista_id: str):
+    from ..core import tiktok_cache
+    return tiktok_cache.ler(artista_id)
+
+
+def tiktok_cache_salvar(artista_id: str, views: float, interacoes: float) -> None:
+    from ..core import tiktok_cache
+    tiktok_cache.salvar(artista_id, views, interacoes)
