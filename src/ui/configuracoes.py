@@ -336,6 +336,31 @@ def render(st) -> None:
                     except Exception as erro:  # noqa: BLE001
                         st.error(f"❌ Não deu para autorizar.\n\nDetalhe: `{erro}`")
 
+    with st.expander("🎵 TikTok — conectar as contas dos artistas"):
+        from ..connectors import tiktok_auth
+        redirect = settings.get_env("TIKTOK_REDIRECT_URI")
+        ck = settings.get_env("TIKTOK_CLIENT_KEY")
+        st.caption(
+            "Clique em **Conectar** e faça login com a conta do TikTok do artista, "
+            "depois autorize. ⚠️ Use esta tela **no painel da nuvem** (o retorno do "
+            "login vai para o endereço do site publicado)."
+        )
+        if not (ck and redirect):
+            st.warning(
+                "Faltam as chaves do TikTok nas configurações (TIKTOK_CLIENT_KEY e "
+                "TIKTOK_REDIRECT_URI). Elas ficam nos *Secrets* da nuvem."
+            )
+        for a_id, a_nome in artistas:
+            ok = tiktok_auth.esta_autorizado(a_id)
+            c_a, c_b = st.columns([2, 1])
+            c_a.write(f"🎤 {a_nome}: {'✅ conectado' if ok else '⚠️ não conectado'}")
+            if ck and redirect:
+                c_b.link_button(
+                    "Reconectar" if ok else "Conectar",
+                    tiktok_auth.montar_url_login(redirect, a_id),
+                    use_container_width=True,
+                )
+
     with st.expander("🔎 YouTube — diagnóstico (ver por que vem zero)"):
         st.caption(
             "Testa o login do YouTube **aqui** (no PC ou na nuvem) e mostra o "

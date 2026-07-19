@@ -40,6 +40,30 @@ tema.aplicar_tema(st)
 
 # Na nuvem: carrega os segredos e exige senha. Local: passa direto.
 nuvem.carregar_segredos_streamlit()
+
+
+def _tiktok_retorno() -> None:
+    """Quando o login do TikTok volta, ele redireciona para cá com ?code=...
+    Isso acontece ANTES da senha (o TikTok não conhece a senha do painel)."""
+    params = st.query_params
+    if "code" not in params:
+        return
+    from src.connectors import tiktok_auth
+    artista = params.get("state", "")
+    redirect = settings.get_env("TIKTOK_REDIRECT_URI")
+    try:
+        tiktok_auth.trocar_codigo(params.get("code"), redirect, artista)
+        st.query_params.clear()
+        st.success(
+            f"✅ TikTok autorizado para **{artista}**! "
+            "Pode fechar este aviso e voltar ao painel."
+        )
+    except Exception as e:  # noqa: BLE001
+        st.error(f"❌ Não deu para autorizar o TikTok: `{e}`")
+    st.stop()
+
+
+_tiktok_retorno()
 acesso.exigir_login(st)
 
 

@@ -16,6 +16,7 @@ from .deezer import ConectorDeezer
 from .facebook import ConectorFacebook
 from .instagram import ConectorInstagram
 from .spotify import ConectorSpotify
+from .tiktok import ConectorTikTok
 from .vazio import ConectorVazio
 from .youtube import ConectorYouTube
 
@@ -26,7 +27,7 @@ _CONECTORES_REAIS = {
     "youtube": ConectorYouTube,
     "spotify": ConectorSpotify,
     "deezer": ConectorDeezer,
-    # "tiktok":   ConectorTikTok,   # <- futuro
+    "tiktok": ConectorTikTok,
 }
 
 
