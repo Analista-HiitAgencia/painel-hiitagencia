@@ -58,9 +58,11 @@ def trocar_codigo(codigo: str, redirect_uri: str, artista_id: str) -> str:
     )
     r.raise_for_status()
     dados = r.json()
-    refresh = dados.get("refresh_token", "")
-    if refresh:
-        tokens.salvar_token(artista_id, "tiktok", refresh)
+    # o TikTok pode devolver os campos "soltos" ou dentro de "data"
+    refresh = dados.get("refresh_token") or dados.get("data", {}).get("refresh_token", "")
+    if not refresh:
+        raise RuntimeError(f"TikTok não devolveu refresh_token. Resposta: {dados}")
+    tokens.salvar_token(artista_id, "tiktok", refresh)
     return refresh
 
 
@@ -84,11 +86,12 @@ def obter_access_token(artista_id: str) -> str | None:
     )
     r.raise_for_status()
     dados = r.json()
+    d = dados.get("data", {}) if isinstance(dados.get("data"), dict) else {}
     # o TikTok pode devolver um refresh token novo — guarda o mais recente.
-    novo_rt = dados.get("refresh_token")
+    novo_rt = dados.get("refresh_token") or d.get("refresh_token")
     if novo_rt and novo_rt != rt:
         tokens.salvar_token(artista_id, "tiktok", novo_rt)
-    return dados.get("access_token")
+    return dados.get("access_token") or d.get("access_token")
 
 
 def esta_autorizado(artista_id: str) -> bool:
